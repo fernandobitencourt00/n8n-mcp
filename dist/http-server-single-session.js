@@ -56,6 +56,7 @@ class SingleSessionHTTPServer {
         this.sessionTimeout = parseInt(process.env.SESSION_TIMEOUT_MINUTES || '5', 10) * 60 * 1000;
         this.authToken = null;
         this.cleanupTimer = null;
+        this.warningTimer = null;
         this.validateEnvironment();
         this.startSessionCleanup();
     }
@@ -68,6 +69,9 @@ class SingleSessionHTTPServer {
                 logger_1.logger.error('Error during session cleanup', error);
             }
         }, SESSION_CLEANUP_INTERVAL);
+        if (this.cleanupTimer.unref) {
+            this.cleanupTimer.unref();
+        }
         logger_1.logger.info('Session cleanup started', {
             interval: SESSION_CLEANUP_INTERVAL / 1000 / 60,
             maxSessions: MAX_SESSIONS,
@@ -351,7 +355,9 @@ class SingleSessionHTTPServer {
                         const sid = transport.sessionId;
                         if (sid) {
                             logger_1.logger.info('handleRequest: Transport closed, cleaning up', { sessionId: sid });
-                            this.removeSession(sid, 'transport_closed');
+                            this.removeSession(sid, 'transport_closed').catch(err => {
+                                logger_1.logger.error('Error during transport close cleanup', { sessionId: sid, error: err });
+                            });
                         }
                     };
                     transport.onerror = (error) => {
@@ -980,12 +986,15 @@ class SingleSessionHTTPServer {
             }
             console.log('\nPress Ctrl+C to stop the server');
             if (isDefaultToken && !isProduction) {
-                setInterval(() => {
+                this.warningTimer = setInterval(() => {
                     logger_1.logger.warn('⚠️ Still using default AUTH_TOKEN - security risk!');
                     if (process.env.MCP_MODE === 'http') {
                         console.warn('⚠️ REMINDER: Still using default AUTH_TOKEN - please change it!');
                     }
                 }, 300000);
+                if (this.warningTimer.unref) {
+                    this.warningTimer.unref();
+                }
             }
             if (process.env.BASE_URL || process.env.PUBLIC_URL) {
                 console.log(`\nPublic URL configured: ${baseUrl}`);
@@ -998,13 +1007,16 @@ class SingleSessionHTTPServer {
             if (error.code === 'EADDRINUSE') {
                 logger_1.logger.error(`Port ${port} is already in use`);
                 console.error(`ERROR: Port ${port} is already in use`);
-                process.exit(1);
             }
             else {
                 logger_1.logger.error('Server error:', error);
                 console.error('Server error:', error);
-                process.exit(1);
             }
+            this.shutdown().catch(err => {
+                logger_1.logger.error('Error during shutdown after server error:', err);
+            }).finally(() => {
+                process.exit(1);
+            });
         });
     }
     async shutdown() {
@@ -1013,6 +1025,10 @@ class SingleSessionHTTPServer {
             clearInterval(this.cleanupTimer);
             this.cleanupTimer = null;
             logger_1.logger.info('Session cleanup timer stopped');
+        }
+        if (this.warningTimer) {
+            clearInterval(this.warningTimer);
+            this.warningTimer = null;
         }
         const sessionIds = Object.keys(this.transports);
         logger_1.logger.info(`Closing ${sessionIds.length} active sessions`);

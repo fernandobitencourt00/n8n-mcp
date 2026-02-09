@@ -3921,9 +3921,15 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
   async run(): Promise<void> {
     // Ensure database is initialized before starting server
     await this.ensureInitialized();
-    
+
     const transport = new StdioServerTransport();
-    await this.server.connect(transport);
+    try {
+      await this.server.connect(transport);
+    } catch (error) {
+      logger.error('Failed to connect server to stdio transport:', error);
+      await this.shutdown();
+      throw error;
+    }
     
     // Force flush stdout for Docker environments
     // Docker uses block buffering which can delay MCP responses

@@ -139,12 +139,24 @@ Learn more: https://github.com/czlonkowski/n8n-mcp/blob/main/PRIVACY.md
                 else {
                     const { SingleSessionHTTPServer } = await Promise.resolve().then(() => __importStar(require('../http-server-single-session')));
                     const server = new SingleSessionHTTPServer();
-                    const shutdown = async () => {
-                        await server.shutdown();
-                        process.exit(0);
+                    let isShuttingDown = false;
+                    const shutdown = async (signal = 'UNKNOWN') => {
+                        if (isShuttingDown)
+                            return;
+                        isShuttingDown = true;
+                        try {
+                            logger_1.logger.info(`HTTP server shutdown initiated by: ${signal}`);
+                            await server.shutdown();
+                        }
+                        catch (error) {
+                            logger_1.logger.error('Error during HTTP server shutdown:', error);
+                        }
+                        finally {
+                            process.exit(0);
+                        }
                     };
-                    process.on('SIGTERM', shutdown);
-                    process.on('SIGINT', shutdown);
+                    process.on('SIGTERM', () => shutdown('SIGTERM'));
+                    process.on('SIGINT', () => shutdown('SIGINT'));
                     await server.start();
                 }
             }

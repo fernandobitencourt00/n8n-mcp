@@ -43,6 +43,7 @@ interface MCPToolResponse {
 
 let expressServer: any;
 let authToken: string | null = null;
+let warningTimer: NodeJS.Timeout | null = null;
 
 /**
  * Load auth token from environment variable or file
@@ -115,7 +116,12 @@ function validateEnvironment() {
 async function shutdown() {
   logger.info('Shutting down HTTP server...');
   console.log('Shutting down HTTP server...');
-  
+
+  if (warningTimer) {
+    clearInterval(warningTimer);
+    warningTimer = null;
+  }
+
   if (expressServer) {
     expressServer.close(() => {
       logger.info('HTTP server closed');
@@ -370,7 +376,18 @@ export async function startFixedHTTPServer() {
       req.on('data', chunk => {
         body += chunk.toString();
       });
-      
+
+      req.on('error', (error: Error) => {
+        logger.error('Request stream error:', { error: error.message });
+        if (!res.headersSent) {
+          res.status(400).json({
+            jsonrpc: '2.0',
+            error: { code: -32700, message: 'Request stream error' },
+            id: null,
+          });
+        }
+      });
+
       req.on('end', async () => {
         try {
           const jsonRpcRequest = JSON.parse(body);
@@ -578,12 +595,15 @@ export async function startFixedHTTPServer() {
     
     // Start periodic warning timer if using default token
     if (authToken === 'REPLACE_THIS_AUTH_TOKEN_32_CHARS_MIN_abcdefgh') {
-      setInterval(() => {
+      warningTimer = setInterval(() => {
         logger.warn('⚠️ Still using default AUTH_TOKEN - security risk!');
         if (process.env.MCP_MODE === 'http') {
           console.warn('⚠️ REMINDER: Still using default AUTH_TOKEN - please change it!');
         }
       }, 300000); // Every 5 minutes
+      if (warningTimer.unref) {
+        warningTimer.unref();
+      }
     }
     
     if (process.env.BASE_URL || process.env.PUBLIC_URL) {

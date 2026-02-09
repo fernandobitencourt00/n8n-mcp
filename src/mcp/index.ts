@@ -147,16 +147,25 @@ Learn more: https://github.com/czlonkowski/n8n-mcp/blob/main/PRIVACY.md
         // HTTP mode - for remote deployment with single-session architecture
         const { SingleSessionHTTPServer } = await import('../http-server-single-session');
         const server = new SingleSessionHTTPServer();
-        
+
         // Graceful shutdown handlers
-        const shutdown = async () => {
-          await server.shutdown();
-          process.exit(0);
+        let isShuttingDown = false;
+        const shutdown = async (signal: string = 'UNKNOWN') => {
+          if (isShuttingDown) return;
+          isShuttingDown = true;
+          try {
+            logger.info(`HTTP server shutdown initiated by: ${signal}`);
+            await server.shutdown();
+          } catch (error) {
+            logger.error('Error during HTTP server shutdown:', error);
+          } finally {
+            process.exit(0);
+          }
         };
-        
-        process.on('SIGTERM', shutdown);
-        process.on('SIGINT', shutdown);
-        
+
+        process.on('SIGTERM', () => shutdown('SIGTERM'));
+        process.on('SIGINT', () => shutdown('SIGINT'));
+
         await server.start();
       }
     } else {

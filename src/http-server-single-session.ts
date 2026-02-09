@@ -115,6 +115,7 @@ export class SingleSessionHTTPServer {
   ) * 60 * 1000;
   private authToken: string | null = null;
   private cleanupTimer: NodeJS.Timeout | null = null;
+  private warningTimer: NodeJS.Timeout | null = null;
   
   constructor() {
     // Validate environment on construction
@@ -136,6 +137,10 @@ export class SingleSessionHTTPServer {
         logger.error('Error during session cleanup', error);
       }
     }, SESSION_CLEANUP_INTERVAL);
+    // Unref so this timer doesn't prevent graceful process exit
+    if (this.cleanupTimer.unref) {
+      this.cleanupTimer.unref();
+    }
     
     logger.info('Session cleanup started', { 
       interval: SESSION_CLEANUP_INTERVAL / 1000 / 60,
@@ -576,7 +581,9 @@ export class SingleSessionHTTPServer {
             const sid = transport.sessionId;
             if (sid) {
               logger.info('handleRequest: Transport closed, cleaning up', { sessionId: sid });
-              this.removeSession(sid, 'transport_closed');
+              this.removeSession(sid, 'transport_closed').catch(err => {
+                logger.error('Error during transport close cleanup', { sessionId: sid, error: err });
+              });
             }
           };
           
@@ -1376,12 +1383,15 @@ export class SingleSessionHTTPServer {
       
       // Start periodic warning timer if using default token
       if (isDefaultToken && !isProduction) {
-        setInterval(() => {
+        this.warningTimer = setInterval(() => {
           logger.warn('⚠️ Still using default AUTH_TOKEN - security risk!');
           if (process.env.MCP_MODE === 'http') {
             console.warn('⚠️ REMINDER: Still using default AUTH_TOKEN - please change it!');
           }
         }, 300000); // Every 5 minutes
+        if (this.warningTimer.unref) {
+          this.warningTimer.unref();
+        }
       }
       
       if (process.env.BASE_URL || process.env.PUBLIC_URL) {
@@ -1396,12 +1406,16 @@ export class SingleSessionHTTPServer {
       if (error.code === 'EADDRINUSE') {
         logger.error(`Port ${port} is already in use`);
         console.error(`ERROR: Port ${port} is already in use`);
-        process.exit(1);
       } else {
         logger.error('Server error:', error);
         console.error('Server error:', error);
-        process.exit(1);
       }
+      // Graceful shutdown instead of immediate process.exit
+      this.shutdown().catch(err => {
+        logger.error('Error during shutdown after server error:', err);
+      }).finally(() => {
+        process.exit(1);
+      });
     });
   }
   
@@ -1416,6 +1430,12 @@ export class SingleSessionHTTPServer {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
       logger.info('Session cleanup timer stopped');
+    }
+
+    // Stop warning timer
+    if (this.warningTimer) {
+      clearInterval(this.warningTimer);
+      this.warningTimer = null;
     }
     
     // Close all active transports (SDK pattern)

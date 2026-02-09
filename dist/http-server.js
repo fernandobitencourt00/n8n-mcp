@@ -21,6 +21,7 @@ const protocol_version_1 = require("./utils/protocol-version");
 dotenv_1.default.config();
 let expressServer;
 let authToken = null;
+let warningTimer = null;
 function loadAuthToken() {
     if (process.env.AUTH_TOKEN) {
         logger_1.logger.info('Using AUTH_TOKEN from environment variable');
@@ -69,6 +70,10 @@ function validateEnvironment() {
 async function shutdown() {
     logger_1.logger.info('Shutting down HTTP server...');
     console.log('Shutting down HTTP server...');
+    if (warningTimer) {
+        clearInterval(warningTimer);
+        warningTimer = null;
+    }
     if (expressServer) {
         expressServer.close(() => {
             logger_1.logger.info('HTTP server closed');
@@ -271,6 +276,16 @@ async function startFixedHTTPServer() {
             req.on('data', chunk => {
                 body += chunk.toString();
             });
+            req.on('error', (error) => {
+                logger_1.logger.error('Request stream error:', { error: error.message });
+                if (!res.headersSent) {
+                    res.status(400).json({
+                        jsonrpc: '2.0',
+                        error: { code: -32700, message: 'Request stream error' },
+                        id: null,
+                    });
+                }
+            });
             req.on('end', async () => {
                 try {
                     const jsonRpcRequest = JSON.parse(body);
@@ -432,12 +447,15 @@ async function startFixedHTTPServer() {
         console.log(`MCP endpoint: ${endpoints.mcp}`);
         console.log('\nPress Ctrl+C to stop the server');
         if (authToken === 'REPLACE_THIS_AUTH_TOKEN_32_CHARS_MIN_abcdefgh') {
-            setInterval(() => {
+            warningTimer = setInterval(() => {
                 logger_1.logger.warn('⚠️ Still using default AUTH_TOKEN - security risk!');
                 if (process.env.MCP_MODE === 'http') {
                     console.warn('⚠️ REMINDER: Still using default AUTH_TOKEN - please change it!');
                 }
             }, 300000);
+            if (warningTimer.unref) {
+                warningTimer.unref();
+            }
         }
         if (process.env.BASE_URL || process.env.PUBLIC_URL) {
             console.log(`\nPublic URL configured: ${baseUrl}`);

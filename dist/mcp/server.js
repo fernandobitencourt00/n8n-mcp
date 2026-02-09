@@ -2903,7 +2903,14 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     async run() {
         await this.ensureInitialized();
         const transport = new stdio_js_1.StdioServerTransport();
-        await this.server.connect(transport);
+        try {
+            await this.server.connect(transport);
+        }
+        catch (error) {
+            logger_1.logger.error('Failed to connect server to stdio transport:', error);
+            await this.shutdown();
+            throw error;
+        }
         if (!process.stdout.isTTY || process.env.IS_DOCKER) {
             const originalWrite = process.stdout.write.bind(process.stdout);
             process.stdout.write = function (chunk, encoding, callback) {
